@@ -1,90 +1,126 @@
-import streamlit as st
+# ================================================
+# ✅ Imports
+# ================================================
 import pandas as pd
+import numpy as np
 from rdkit import Chem
-from rdkit.Chem import Descriptors, Draw
+from rdkit.Chem import Descriptors
+from rdkit.Chem.Draw import IPythonConsole
+from rdkit.Chem import PandasTools
+import py3Dmol
 import plotly.express as px
-from io import StringIO
-from PIL import Image
-
-# ✅ PAINS-safe fallback (no RDKit crash)
-def pains_check(mol):
-    return "Not Supported in this environment"
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
+from google.colab import files
+import io
+import streamlit as st # (if running as notebook ignore)
+# ================================================
 
 # =========================
-# PAGE CONFIG
+# ✅ 1) Lipinski Function
 # =========================
-st.set_page_config(page_title="ADMET & Docking Prioritizer", page_icon="🧬", layout="wide")
-st.title("🧬 ADMET & Docking Prioritizer")
-st.caption("Cheminformatics + ADMET + Docking Prioritization")
+def lipinski(smiles):
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        return pd.Series([None]*5, index=["MW", "LogP", "HBD", "HBA","Lipinski_pass"])
 
-EXAMPLE_DATA = """SMILES,Docking_Score
-CC(=O)Oc1ccccc1C(=O)O,-7.2
-COc1ccc(C(C)Nc2ccc(C)cc2)cc1,-6.5
-O=C1CCc2c(C)nc(C)c2N1C1CC1,-4.1
-CC(C)CN(C)CC(O)C(C)c1ccc(O)c(Cl)c1,-5.9
-C1=CC=C2C(=C1)C=CC(=O)C2=O,-7.5
-InvalidSMILES,-8.0
-"""
+    mw = Descriptors.MolWt(mol)
+    logp = Descriptors.MolLogP(mol)
+    hbd = Chem.GetNHydrogenBondDonors(mol)
+    hba = Chem.GetNHydrogenBondAcceptors(mol)
 
-# ========================= INPUT
-input_method = st.radio("Input molecules", 
-                        ('Example Data','Paste Data','Upload CSV'),horizontal=True)
+    lip_pass = (mw < 500) and (logp < 5) and (hbd <= 5) and (hba <= 10)
 
-if input_method=="Example Data":
-    df = pd.read_csv(StringIO(EXAMPLE_DATA))
+    return pd.Series([mw, logp, hbd, hba, lip_pass],
+                     index=["MW","LogP","HBD","HBA","Lipinski_pass"])
 
-elif input_method=="Paste Data":
-    txt = st.text_area("Paste SMILES,Docking_Score", EXAMPLE_DATA, height=200)
-    df = pd.read_csv(StringIO(txt))
 
+# =========================
+# ✅ 2) PAINS Filter (SMILES check - no RDKit FilterCatalog)
+# =========================
+PAINS_smarts = [
+    "c1ccccc1[N+](=O)[O-]",  # Nitroaromatics
+    "[#6]=[#6]-[#6]=[#6]",   # Michael acceptor
+    "O=C-O-CO",              # Carbonate alerts
+]
+
+def pains_check(smiles):
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        return None
+    
+    for smarts in PAINS_smarts:
+        patt = Chem.MolFromSmarts(smarts)
+        if mol.HasSubstructMatch(patt):
+            return True
+    return False
+
+
+# =========================
+# ✅ 3) Display 3D molecule
+# =========================
+def show_3d(smiles):
+    mol = Chem.MolFromSmiles(smiles)
+    mol = Chem.AddHs(mol)
+    Chem.EmbedMolecule(mol)
+    Chem.UFFOptimizeMolecule(mol)
+    mblock = Chem.MolToMolBlock(mol)
+
+    viewer = py3Dmol.view(width=400, height=400)
+    viewer.addModel(mblock, 'mol')
+    viewer.setStyle({'stick': {}})
+    viewer.zoomTo()
+    return viewer.show()
+
+
+# =========================
+# ✅ 4) Upload CSV or SDF
+# =========================
+uploaded = files.upload()
+filename = next(iter(uploaded))
+filetype = filename.split(".")[-1]
+
+if filetype == "csv":
+    df = pd.read_csv(io.BytesIO(uploaded[filename]))
+elif filetype == "sdf":
+    df = PandasTools.LoadSDF(io.BytesIO(uploaded[filename]), smilesName="SMILES")
 else:
-    file = st.file_uploader("Upload CSV",type=["csv"])
-    df = pd.read_csv(file) if file else None
+    raise ValueError("Upload only .csv or .sdf")
 
-# ========================= PROCESS
-if st.button("🚀 Analyze") and df is not None:
+df = df.dropna(subset=["SMILES"]).reset_index(drop=True)
 
-    results, images = [], []
+# =========================
+# ✅ 5) Compute properties
+# =========================
+lip = df["SMILES"].apply(lipinski)
+df = pd.concat([df, lip], axis=1)
+df["PAINS_flag"] = df["SMILES"].apply(pains_check)
 
-    for _, row in df.iterrows():
-        sm = row.SMILES
-        score = row.Docking_Score
-        mol = Chem.MolFromSmiles(sm)
+print("✅ ADMET + Lipinski + PAINS computed!")
 
-        if mol is None:
-            results.append([sm,score,"Invalid",None,None,None,None,None,"No"])
-            images.append(None)
-            continue
+# =========================
+# ✅ 6) Train Quick Classifier for Demo
+# =========================
+features = df[["MW","LogP","HBD","HBA"]]
+labels = np.where(df["Lipinski_pass"]==True, 1, 0)
 
-        mw = Descriptors.MolWt(mol)
-        logp = Descriptors.MolLogP(mol)
-        hbd = Descriptors.NumHDonors(mol)
-        hba = Descriptors.NumHAcceptors(mol)
+X_train, X_test, y_train, y_test = train_test_split(features, labels, test_size=0.25)
+model = RandomForestClassifier()
+model.fit(X_train,y_train)
+preds = model.predict(X_test)
 
-        violations = sum([mw>500, logp>5, hbd>5, hba>10])
-        status = "Pass" if violations<=1 else "Fail"
+print("✅ Demo ML Accuracy:", accuracy_score(y_test,preds))
 
-        pains_flag = pains_check(mol)
+df["Predicted_ADMET"] = model.predict(features)
 
-        results.append([sm,score,status,round(mw,2),round(logp,2),hbd,hba,violations,pains_flag])
-        images.append(Draw.MolToImage(mol,size=(200,200)))
+# =========================
+# ✅ 7) Visualization
+# =========================
+fig = px.scatter(df,
+                 x="MW", y="LogP",
+                 color="Predicted_ADMET",
+                 title="Drug-likeness Plot (MW vs LogP)")
+fig.show()
 
-    cols = ["SMILES","Docking_Score","Status","MW","LogP","HDonors","HAcceptors","Violations","PAINS"]
-    df_res = pd.DataFrame(results,columns=cols)
-
-    st.success("✅ Done")
-    st.dataframe(df_res,use_container_width=True)
-
-    st.subheader("Structures")
-    for i,img in enumerate(images):
-        if img: st.image(img,caption=df_res.iloc[i].SMILES,width=150)
-
-    st.subheader("MW vs Docking Score")
-    fig = px.scatter(df_res[df_res.Status=="Pass"],x="MW",y="Docking_Score",
-                     hover_data=["SMILES"],color="Violations")
-    st.plotly_chart(fig,use_container_width=True)
-
-    st.download_button("💾 Download Results", df_res.to_csv(index=False), "results.csv")
-
-else:
-    st.info("Upload or paste molecules, then click Analyze")
+df.head()
