@@ -3,5 +3,5 @@ pandas
 numpy
 scikit-learn
 plotly
-rdkit
+rdkit-pypi
 py3Dmol
