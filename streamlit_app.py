@@ -1,144 +1,90 @@
 import streamlit as st
 import pandas as pd
 from rdkit import Chem
-from rdkit.Chem import Descriptors, Draw, FilterCatalog, FilterCatalogParams
-from rdkit.Chem.Draw import rdMolDraw2D
-import py3Dmol
+from rdkit.Chem import Descriptors, Draw
+import plotly.express as px
 from io import StringIO
+from PIL import Image
 
-# =====================================
-# PAGE CONFIG & THEME
-# =====================================
-st.set_page_config(page_title="ADMET & Docking Prioritizer", page_icon="🧬", layout="wide")
-
-st.markdown("""
-<style>
-body { background-color:#0e1117; color:#fafafa }
-h1,h2,h3 { color:#00c3ff }
-</style>
-""", unsafe_allow_html=True)
-
-st.title("🧬 ADMET + Docking Prioritizer")
-st.caption("Drug-likeness, PAINS filter, 3D Viewer & Docking Score Ranking")
-
-# ========== PAINS FILTER ==========
-params = FilterCatalogParams()
-params.AddCatalog(FilterCatalogParams.FilterCatalogs.PAINS)
-catalog = FilterCatalog(params)
-
+# ✅ PAINS-safe fallback (no RDKit crash)
 def pains_check(mol):
-    """Return PAINS alerts"""
-    entries = catalog.GetMatches(mol)
-    return "Yes" if len(entries) > 0 else "No"
+    return "Not Supported in this environment"
 
-# ========== 3D VIEWER ==========
+# =========================
+# PAGE CONFIG
+# =========================
+st.set_page_config(page_title="ADMET & Docking Prioritizer", page_icon="🧬", layout="wide")
+st.title("🧬 ADMET & Docking Prioritizer")
+st.caption("Cheminformatics + ADMET + Docking Prioritization")
 
-def show_3d(smiles):
-    mol = Chem.MolFromSmiles(smiles)
-    mol = Chem.AddHs(mol)
-    try:
-        from rdkit.Chem import AllChem
-        AllChem.EmbedMolecule(mol)
-        AllChem.MMFFOptimizeMolecule(mol)
-        block = Chem.MolToMolBlock(mol)
-        
-        viewer = py3Dmol.view(width=500, height=400)
-        viewer.addModel(block,"mol")
-        viewer.setStyle({'stick': {}})
-        viewer.zoomTo()
-        viewer.show()
-    except:
-        st.warning("3D structure could not be generated for this SMILES.")
-
-# ========== INPUT SECTION ==========
-st.header("📥 Input Molecules")
-
-input_method = st.radio("Choose input:", ["Example", "Paste", "Upload CSV", "Upload SDF"], horizontal=True)
-
-EXAMPLE = """SMILES,Docking
+EXAMPLE_DATA = """SMILES,Docking_Score
 CC(=O)Oc1ccccc1C(=O)O,-7.2
 COc1ccc(C(C)Nc2ccc(C)cc2)cc1,-6.5
 O=C1CCc2c(C)nc(C)c2N1C1CC1,-4.1
+CC(C)CN(C)CC(O)C(C)c1ccc(O)c(Cl)c1,-5.9
+C1=CC=C2C(=C1)C=CC(=O)C2=O,-7.5
+InvalidSMILES,-8.0
 """
 
-df = None
+# ========================= INPUT
+input_method = st.radio("Input molecules", 
+                        ('Example Data','Paste Data','Upload CSV'),horizontal=True)
 
-if input_method == "Example":
-    df = pd.read_csv(StringIO(EXAMPLE.strip()))
+if input_method=="Example Data":
+    df = pd.read_csv(StringIO(EXAMPLE_DATA))
 
-elif input_method == "Paste":
-    txt = st.text_area("Paste SMILES,Docking:", EXAMPLE, height=200)
-    df = pd.read_csv(StringIO(txt.strip()))
+elif input_method=="Paste Data":
+    txt = st.text_area("Paste SMILES,Docking_Score", EXAMPLE_DATA, height=200)
+    df = pd.read_csv(StringIO(txt))
 
-elif input_method == "Upload CSV":
-    f = st.file_uploader("Upload CSV", type=["csv"])
-    if f:
-        df = pd.read_csv(f)
+else:
+    file = st.file_uploader("Upload CSV",type=["csv"])
+    df = pd.read_csv(file) if file else None
 
-elif input_method == "Upload SDF":
-    sdf = st.file_uploader("Upload .sdf", type=["sdf"])
-    if sdf:
-        suppl = Chem.SDMolSupplier(sdf)
-        mols = [m for m in suppl if m is not None]
-        df = pd.DataFrame({
-            "SMILES":[Chem.MolToSmiles(m) for m in mols],
-            "Docking":[0]*len(mols)   # user adds docking later
-        })
-        st.success(f"✅ Loaded {len(df)} molecules from SDF")
+# ========================= PROCESS
+if st.button("🚀 Analyze") and df is not None:
 
-if df is not None:
-    st.dataframe(df, use_container_width=True)
+    results, images = [], []
 
-# ========== RUN ANALYSIS ==========
-if st.button("🚀 Run ADMET Prioritization") and df is not None:
-    results = []
-    
-    for i,row in df.iterrows():
-        smi = row["SMILES"]
-        dock = row["Docking"]
-        mol = Chem.MolFromSmiles(smi)
-        
+    for _, row in df.iterrows():
+        sm = row.SMILES
+        score = row.Docking_Score
+        mol = Chem.MolFromSmiles(sm)
+
         if mol is None:
+            results.append([sm,score,"Invalid",None,None,None,None,None,"No"])
+            images.append(None)
             continue
-        
+
         mw = Descriptors.MolWt(mol)
         logp = Descriptors.MolLogP(mol)
-        hdon = Descriptors.NumHDonors(mol)
-        hacp = Descriptors.NumHAcceptors(mol)
-        
-        # Lipinski violations
-        viol = sum([
-            mw > 500,
-            logp > 5,
-            hdon > 5,
-            hacp > 10
-        ])
+        hbd = Descriptors.NumHDonors(mol)
+        hba = Descriptors.NumHAcceptors(mol)
 
-        # PAINS check
-        pains = pains_check(mol)
+        violations = sum([mw>500, logp>5, hbd>5, hba>10])
+        status = "Pass" if violations<=1 else "Fail"
 
-        status = "Pass" if viol <= 1 and pains=="No" else "Fail"
+        pains_flag = pains_check(mol)
 
-        results.append([smi, dock, mw, logp, hdon, hacp, viol, pains, status])
+        results.append([sm,score,status,round(mw,2),round(logp,2),hbd,hba,violations,pains_flag])
+        images.append(Draw.MolToImage(mol,size=(200,200)))
 
-    cols = ["SMILES","Docking","MW","LogP","HDonors","HAcceptors","Violations","PAINS","Status"]
-    out = pd.DataFrame(results, columns=cols)
+    cols = ["SMILES","Docking_Score","Status","MW","LogP","HDonors","HAcceptors","Violations","PAINS"]
+    df_res = pd.DataFrame(results,columns=cols)
 
-    # Ranking (better docking = lower score)
-    out_pass = out[out["Status"]=="Pass"].sort_values(by="Docking")
-    out_pass["Rank"] = range(1,len(out_pass)+1)
-    out_fail = out[out["Status"]!="Pass"]
-    out_fail["Rank"] = "-"
-    
-    final = pd.concat([out_pass,out_fail])
-    
-    st.success("✅ Analysis Complete")
-    st.dataframe(final, use_container_width=True)
+    st.success("✅ Done")
+    st.dataframe(df_res,use_container_width=True)
 
-    st.download_button("💾 Download Results", final.to_csv(index=False).encode(),
-                       "admet_results.csv", "text/csv")
+    st.subheader("Structures")
+    for i,img in enumerate(images):
+        if img: st.image(img,caption=df_res.iloc[i].SMILES,width=150)
 
-    # View 3D
-    st.subheader("🧬 3D Molecule Viewer")
-    smi_sel = st.selectbox("Select molecule", final["SMILES"].tolist())
-    show_3d(smi_sel)
+    st.subheader("MW vs Docking Score")
+    fig = px.scatter(df_res[df_res.Status=="Pass"],x="MW",y="Docking_Score",
+                     hover_data=["SMILES"],color="Violations")
+    st.plotly_chart(fig,use_container_width=True)
+
+    st.download_button("💾 Download Results", df_res.to_csv(index=False), "results.csv")
+
+else:
+    st.info("Upload or paste molecules, then click Analyze")
