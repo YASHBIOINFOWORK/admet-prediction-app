@@ -1,6 +1,8 @@
-streamlit
-rdkit-pypi
+streamlit>=1.30.0
 pandas
 numpy
 scikit-learn
+rdkit-pypi
 py3Dmol
+matplotlib
+pillow
