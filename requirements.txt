@@ -2,6 +2,6 @@ streamlit>=1.30.0
 pandas
 numpy
 scikit-learn
-rdkit-pypi
 plotly
+rdkit==2024.03.5
 py3Dmol
