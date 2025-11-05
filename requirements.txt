@@ -3,5 +3,5 @@ pandas
 numpy
 scikit-learn
 plotly
-rdkit==2024.03.5
+rdkit
 py3Dmol
