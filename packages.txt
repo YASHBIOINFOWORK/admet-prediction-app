@@ -1,0 +1,7 @@
+libc6
+libgcc-s1
+libstdc++6
+libxrender1
+libsm6
+libxext6
+libgl1
