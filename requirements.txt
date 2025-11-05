@@ -1,6 +1,8 @@
-streamlit
-pillow
+streamlit>=1.30.0
+pandas
 numpy
-opencv-python
 scikit-learn
 rdkit-pypi
+py3Dmol
+matplotlib
+pillow
