@@ -1,6 +1,6 @@
 streamlit
-pillow
-numpy
-opencv-python
-scikit-learn
 rdkit-pypi
+pandas
+numpy
+scikit-learn
+py3Dmol
