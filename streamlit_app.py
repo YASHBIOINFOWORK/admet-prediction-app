@@ -5,8 +5,8 @@ import pandas as pd
 import numpy as np
 from rdkit import Chem
 from rdkit.Chem import Descriptors
-from rdkit.Chem.Draw import IPythonConsole
-from rdkit.Chem import PandasTools
+import py3Dmol
+import plotly.express as px
 import py3Dmol
 import plotly.express as px
 from sklearn.ensemble import RandomForestClassifier
