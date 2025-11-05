@@ -12,8 +12,6 @@ import plotly.express as px
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
-from google.colab import files
-import io
 import streamlit as st # (if running as notebook ignore)
 # ================================================
 
